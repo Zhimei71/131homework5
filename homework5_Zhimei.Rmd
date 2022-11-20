@@ -1,0 +1,129 @@
+---
+title: "Homework5"
+author: "Zhimei_Chen"
+date: '2022-11-20'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse) 
+library(RColorBrewer)
+library(ggplot2)
+library(ISLR)
+library(tidymodels)
+library(glmnet)
+tidymodels_prefer()
+```
+
+#Exercise 1
+```{r}
+library(janitor)
+Pokemon <- read_csv("Pokemon.csv") %>%
+    clean_names()
+head(Pokemon)
+```
+
+#Exercise 2
+```{r}
+Pokemon %>% 
+  group_by(type_1) %>% 
+  summarise(n = n()) %>%
+  ggplot(aes(x = reorder(type_1, n), y = n)) +
+  geom_bar(stat = "identity", aes(fill = n)) +
+  coord_flip() +
+  geom_label(aes(label = n), size = 3) +
+  theme_test() +
+  labs(x = "Pokemon Type", y = "Frequency", title = "Bar plot")
+```
+
+There are 18 classes of the outcomes. Yes, there is a Pokémon type with very few Pokémon, which is the Flying Type.
+
+```{r}
+Pokemon_n<-Pokemon %>%  
+  filter(type_1 %in% c("Bug", "Fire", "Grass", "Normal", "Water", "Psychic"))
+
+Pokemon_n$type_1<- as.factor(Pokemon_n$type_1)
+Pokemon_n$legendary<- as.factor(Pokemon_n$legendary)
+Pokemon_n$generation<- as.factor(Pokemon_n$generation)
+
+head(Pokemon_n)
+```
+
+#Exercise 3
+```{r}
+set.seed(3435)
+Pokemon_split <- initial_split(Pokemon_n, strata = "type_1",prop=0.75)
+
+Pokemon_train <- training(Pokemon_split)
+Pokemon_test <- testing(Pokemon_split)
+
+Pokemon_fold <- vfold_cv(Pokemon_train, v = 5,strata="type_1")
+```
+
+Implementing the concept of stratified sampling in cross-validation ensures the training and test sets have the same proportion of the feature of interest as in the original dataset.
+
+#Exercise 4
+```{r}
+recipe<-recipe(formula = type_1 ~ legendary + generation + sp_atk + attack + speed + defense + hp, data = Pokemon_train) %>% 
+  step_dummy(c(legendary,generation)) %>% 
+  step_center(all_predictors()) %>% 
+  step_scale(all_predictors())
+
+```
+
+#Exercise 5
+```{r}
+multinom_reg<-multinom_reg(penalty=tune(),
+                           mixture=tune()) %>% 
+  set_engine('glmnet')
+
+Pokemon_wf <- workflow() %>% 
+  add_recipe(recipe) %>% 
+  add_model(multinom_reg)
+
+Pokemon_grid <-grid_regular(penalty(range=c(-5,5)),
+                mixture(range=c(0,1)),levels = 10)
+
+```
+
+50 models I will be fitting when you fit these models to my folded data.
+
+#Exercise 6
+```{r}
+Pokemon_tune <- 
+  tune_grid(Pokemon_wf,resamples = Pokemon_fold, 
+            grid = Pokemon_grid)
+autoplot(Pokemon_tune)
+```
+
+#Exercise 7
+```{r}
+best_model<-select_best(Pokemon_tune,metric='roc_auc')
+Pokemon_best<-finalize_workflow(Pokemon_wf,best_model)
+Pokemon_best_fit<-fit(Pokemon_best,Pokemon_train)
+augment(Pokemon_best_fit,Pokemon_test,type='prob') %>%
+  roc_auc(truth = type_1,
+  estimate =.pred_Bug:.pred_Water)
+```
+
+#Exercise 8
+```{r}
+aug_fit<-augment(Pokemon_best_fit,Pokemon_test,
+                 type='prob')
+roc_auc(aug_fit,truth=type_1,
+        estimate = .pred_Bug:.pred_Water)
+roc_curve(aug_fit,truth = type_1,
+          estimate = .pred_Bug:.pred_Water) %>%
+  autoplot()
+
+conf_mat(aug_fit,truth = type_1,
+         estimate = .pred_class) %>% 
+  autoplot(type='heatmap')
+```
+
+From the heatmap we can see that normal type has the most overlap between prediction and truth where as fire type has the lowest. 
+Therefore, normal is the model best at predicting while fire is the worst.
